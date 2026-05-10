@@ -1,0 +1,360 @@
+run:
+
+run:
+
+  ╔════════════════════════════════════════════════════════════╗
+  ║  SUBMISSION AND REVIEW SYSTEM  ║
+  ║  BASELINE IMPLEMENTATION                         ║
+  ╚════════════════════════════════════════════════════════════╝
+
+  Key baseline characteristics visible in the output:
+    - Separate Validator class used for format check (Step 2)
+    - TWO separate filter loops in ReviewerManager (Step 4)
+    - Controller runs the reviewer assignment loop itself (Step 4)
+    - saveScore() called once PER REVIEWER — N+1 writes (Step 5)
+    - EvaluationManager calls NotificationService directly (Step 5/6)
+
+╔══════════════════════════════════════════════════════════╗
+║  SCENARIO 1 : Strong Paper — reviewers agree
+╚══════════════════════════════════════════════════════════╝
+  Expected: ACCEPTED (avg >= 7.0, consensus reached)
+
+  Paper  : Deep Learning in NLP
+  Author : A003
+  Format : PDF
+  ............................................................
+
+  [STEP 1] Researcher submits paper via the UI
+           Sequence: Researcher --> UI --> SubmissionController : submit(data)
+
+  [STEP 2] SubmissionController calls Validator to check format
+           Sequence: SubmissionController --> Validator : validateFormat(data)
+           (BASELINE: a separate Validator class is instantiated here)
+
+  Format 'PDF' is VALID. Continuing...
+
+  [STEP 3] Saving submission to database
+           Sequence: SubmissionController --> Database : saveSubmission(data)
+           Confirmation: SAVED_OK_SUB001
+
+  [STEP 4] Finding and assigning reviewers
+           Sequence: SC --> ReviewerManager : getAvailableReviewers()
+                     [loop] SC --> ReviewerManager : assignReview()
+           (BASELINE: three separate operations below)
+
+    a) fetchReviewers()
+       Sequence: ReviewerManager --> Database : fetchReviewers()
+       Database --> ReviewerManager : reviewerList (5 reviewers)
+
+    b) filterConflicts(reviewerList) — LOOP 1 over the list
+       Sequence: ReviewerManager --> ReviewerManager : filterConflicts()
+       (Self-call — ReviewerManager calls itself)
+       5 reviewer(s) remain after conflict filter.
+
+    c) checkWorkload(reviewerList) — LOOP 2 over the same list
+       Sequence: ReviewerManager --> ReviewerManager : checkWorkload()
+       (Another self-call — same list, second full pass)
+       (BASELINE: two loops where one would do — redundant)
+       Dr. Pillay -> AVAILABLE (workload 0)
+       Prof. Singh -> AVAILABLE (workload 0)
+       Dr. Marshall -> EXCLUDED  (workload 5 >= limit of 4)
+       Prof. Makura -> AVAILABLE (workload 0)
+       Dr. Bosman -> AVAILABLE (workload 0)
+       ReviewerManager --> SC : filteredReviewers (4 available)
+
+    d) [loop assign reviewers] — controller drives this loop
+       Sequence: [loop] SC --> ReviewerManager : assignReview()
+       (BASELINE: controller owns this loop)
+       Assigned: Dr. Pillay
+       Assigned: Prof. Singh
+       Assigned: Prof. Makura
+
+  [STEP 5] Starting evaluation
+           Sequence: SC --> EvaluationManager : startEvaluation()
+
+    LOOP [each reviewer submits score]:
+    Sequence: Reviewer --> EvaluationManager : submitScore(score)
+              EvaluationManager --> Database  : saveScore(score)  [one per reviewer]
+    (BASELINE: database written to once PER reviewer)
+
+  [DECISION] Avg: 8,00 | Consensus Agreed: true -> ACCEPTED
+    Outcome     : ACCEPTED
+    Paper       : Deep Learning in NLP
+    Researcher  : A003
+    Message     : Congratulations! Your paper has been accepted for publication.
+
+    Scores saved to DB (one write per reviewer — 3 total writes):
+      Dr. Pillay : 8.5 / 10  <-- individual DB write
+      Prof. Singh : 8.0 / 10  <-- individual DB write
+      Prof. Makura : 7.5 / 10  <-- individual DB write
+
+    Self-call: calculateAverage()
+    Sequence: EvaluationManager --> EvaluationManager : calculateAverage()
+    Self-call: checkConsensus()
+    Sequence: EvaluationManager --> EvaluationManager : checkConsensus()
+    Self-call: applyRules()
+    Sequence: EvaluationManager --> EvaluationManager : applyRules()
+    (BASELINE: decision logic buried inside EvaluationManager)
+
+  [STEP 6] Notification sent by EvaluationManager directly
+           (BASELINE: EvaluationManager calls NotificationService)
+           Sequence: EvaluationManager --> NotificationService : notifyAccepted()
+                     NotificationService --> Researcher : sendNotification()
+
+  [DECISION] Avg: 8,00 | Consensus Agreed: true -> ACCEPTED
+    Outcome     : ACCEPTED
+    Paper       : Deep Learning in NLP
+    Researcher  : A003
+    Message     : Congratulations! Your paper has been accepted for publication.
+
+  ════════════════════════════════════════════
+  SCENARIO RESULT
+  ════════════════════════════════════════════
+  Final status   : ACCEPTED
+  Method calls   : 8  (tracked in SubmissionController)
+  ════════════════════════════════════════════
+
+╔══════════════════════════════════════════════════════════╗
+║  SCENARIO 2 : Invalid format (TXT)
+╚══════════════════════════════════════════════════════════╝
+  Expected: Error — process stops at Validator
+
+  Paper  : Quantum Physics
+  Author : A002
+  Format : TXT
+  ............................................................
+
+  [STEP 1] Researcher submits paper via the UI
+           Sequence: Researcher --> UI --> SubmissionController : submit(data)
+
+  [STEP 2] SubmissionController calls Validator to check format
+           Sequence: SubmissionController --> Validator : validateFormat(data)
+           (BASELINE: a separate Validator class is instantiated here)
+
+  [ALT: INVALID FORMAT]
+  +----------------------------------------------------------+
+  | Format 'TXT' is NOT accepted.                          |
+  | Accepted formats: PDF, DOC, DOCX                        |
+  | Sequence: Validator --> SC : invalid                    |
+  |           SC --> UI : return error                      |
+  | Process stops here. Nothing is saved.                   |
+  +----------------------------------------------------------+
+
+  ════════════════════════════════════════════
+  SCENARIO RESULT
+  ════════════════════════════════════════════
+  Final status   : PENDING
+  Method calls   : 3  (tracked in SubmissionController)
+  ════════════════════════════════════════════
+
+╔══════════════════════════════════════════════════════════╗
+║  SCENARIO 3 : Conflict of Interest — Mixed Scores
+╚══════════════════════════════════════════════════════════╝
+  Expected: REVISION (mid-range avg or high variance)
+
+  Paper  : Blockchain Healthcare
+  Author : A001
+  Format : DOCX
+  ............................................................
+
+  [STEP 1] Researcher submits paper via the UI
+           Sequence: Researcher --> UI --> SubmissionController : submit(data)
+
+  [STEP 2] SubmissionController calls Validator to check format
+           Sequence: SubmissionController --> Validator : validateFormat(data)
+           (BASELINE: a separate Validator class is instantiated here)
+
+  Format 'DOCX' is VALID. Continuing...
+
+  [STEP 3] Saving submission to database
+           Sequence: SubmissionController --> Database : saveSubmission(data)
+           Confirmation: SAVED_OK_SUB003
+
+  [STEP 4] Finding and assigning reviewers
+           Sequence: SC --> ReviewerManager : getAvailableReviewers()
+                     [loop] SC --> ReviewerManager : assignReview()
+           (BASELINE: three separate operations below)
+
+    a) fetchReviewers()
+       Sequence: ReviewerManager --> Database : fetchReviewers()
+       Database --> ReviewerManager : reviewerList (5 reviewers)
+
+    b) filterConflicts(reviewerList) — LOOP 1 over the list
+       Sequence: ReviewerManager --> ReviewerManager : filterConflicts()
+       (Self-call — ReviewerManager calls itself)
+       Dr. Pillay -> EXCLUDED  (conflict of interest with author A001)
+       4 reviewer(s) remain after conflict filter.
+
+    c) checkWorkload(reviewerList) — LOOP 2 over the same list
+       Sequence: ReviewerManager --> ReviewerManager : checkWorkload()
+       (Another self-call — same list, second full pass)
+       (BASELINE: two loops where one would do — redundant)
+       Prof. Singh -> AVAILABLE (workload 0)
+       Dr. Marshall -> EXCLUDED  (workload 5 >= limit of 4)
+       Prof. Makura -> AVAILABLE (workload 0)
+       Dr. Bosman -> AVAILABLE (workload 0)
+       ReviewerManager --> SC : filteredReviewers (3 available)
+
+    d) [loop assign reviewers] — controller drives this loop
+       Sequence: [loop] SC --> ReviewerManager : assignReview()
+       (BASELINE: controller owns this loop)
+       Assigned: Prof. Singh
+       Assigned: Prof. Makura
+       Assigned: Dr. Bosman
+
+  [STEP 5] Starting evaluation
+           Sequence: SC --> EvaluationManager : startEvaluation()
+
+    LOOP [each reviewer submits score]:
+    Sequence: Reviewer --> EvaluationManager : submitScore(score)
+              EvaluationManager --> Database  : saveScore(score)  [one per reviewer]
+    (BASELINE: database written to once PER reviewer)
+
+  [DECISION] Avg: 6,17 | Consensus Agreed: false -> REVISION
+    Outcome     : REVISION REQUIRED
+    Paper       : Blockchain Healthcare
+    Researcher  : A001
+    Message     : Your paper has potential but requires revisions before it can be accepted. Please address the reviewer feedback and resubmit.
+
+    Scores saved to DB (one write per reviewer — 3 total writes):
+      Prof. Singh : 8.0 / 10  <-- individual DB write
+      Prof. Makura : 7.5 / 10  <-- individual DB write
+      Dr. Bosman : 3.0 / 10  <-- individual DB write
+
+    Self-call: calculateAverage()
+    Sequence: EvaluationManager --> EvaluationManager : calculateAverage()
+    Self-call: checkConsensus()
+    Sequence: EvaluationManager --> EvaluationManager : checkConsensus()
+    Self-call: applyRules()
+    Sequence: EvaluationManager --> EvaluationManager : applyRules()
+    (BASELINE: decision logic buried inside EvaluationManager)
+
+  [STEP 6] Notification sent by EvaluationManager directly
+           (BASELINE: EvaluationManager calls NotificationService)
+           Sequence: EvaluationManager --> NotificationService : notifyRevision()
+                     NotificationService --> Researcher : sendNotification()
+
+  [DECISION] Avg: 6,17 | Consensus Agreed: false -> REVISION
+    Outcome     : REVISION REQUIRED
+    Paper       : Blockchain Healthcare
+    Researcher  : A001
+    Message     : Your paper has potential but requires revisions before it can be accepted. Please address the reviewer feedback and resubmit.
+
+  ════════════════════════════════════════════
+  SCENARIO RESULT
+  ════════════════════════════════════════════
+  Final status   : REVISION
+  Method calls   : 8  (tracked in SubmissionController)
+  ════════════════════════════════════════════
+
+╔══════════════════════════════════════════════════════════╗
+║  SCENARIO 4 : Weak Paper — Low scores
+╚══════════════════════════════════════════════════════════╝
+  Expected: REJECTED (avg < 4.0)
+
+  Paper  : Flat Earth Survey
+  Author : A004
+  Format : PDF
+  ............................................................
+
+  [STEP 1] Researcher submits paper via the UI
+           Sequence: Researcher --> UI --> SubmissionController : submit(data)
+
+  [STEP 2] SubmissionController calls Validator to check format
+           Sequence: SubmissionController --> Validator : validateFormat(data)
+           (BASELINE: a separate Validator class is instantiated here)
+
+  Format 'PDF' is VALID. Continuing...
+
+  [STEP 3] Saving submission to database
+           Sequence: SubmissionController --> Database : saveSubmission(data)
+           Confirmation: SAVED_OK_SUB004
+
+  [STEP 4] Finding and assigning reviewers
+           Sequence: SC --> ReviewerManager : getAvailableReviewers()
+                     [loop] SC --> ReviewerManager : assignReview()
+           (BASELINE: three separate operations below)
+
+    a) fetchReviewers()
+       Sequence: ReviewerManager --> Database : fetchReviewers()
+       Database --> ReviewerManager : reviewerList (5 reviewers)
+
+    b) filterConflicts(reviewerList) — LOOP 1 over the list
+       Sequence: ReviewerManager --> ReviewerManager : filterConflicts()
+       (Self-call — ReviewerManager calls itself)
+       5 reviewer(s) remain after conflict filter.
+
+    c) checkWorkload(reviewerList) — LOOP 2 over the same list
+       Sequence: ReviewerManager --> ReviewerManager : checkWorkload()
+       (Another self-call — same list, second full pass)
+       (BASELINE: two loops where one would do — redundant)
+       Dr. Pillay -> AVAILABLE (workload 0)
+       Prof. Singh -> AVAILABLE (workload 0)
+       Dr. Marshall -> EXCLUDED  (workload 5 >= limit of 4)
+       Prof. Makura -> AVAILABLE (workload 0)
+       Dr. Bosman -> AVAILABLE (workload 0)
+       ReviewerManager --> SC : filteredReviewers (4 available)
+
+    d) [loop assign reviewers] — controller drives this loop
+       Sequence: [loop] SC --> ReviewerManager : assignReview()
+       (BASELINE: controller owns this loop)
+       Assigned: Dr. Pillay
+       Assigned: Prof. Singh
+       Assigned: Prof. Makura
+
+  [STEP 5] Starting evaluation
+           Sequence: SC --> EvaluationManager : startEvaluation()
+
+    LOOP [each reviewer submits score]:
+    Sequence: Reviewer --> EvaluationManager : submitScore(score)
+              EvaluationManager --> Database  : saveScore(score)  [one per reviewer]
+    (BASELINE: database written to once PER reviewer)
+
+  [DECISION] Avg: 2,00 | Consensus Agreed: true -> REJECTED
+    Outcome     : REJECTED
+    Paper       : Flat Earth Survey
+    Researcher  : A004
+    Message     : Unfortunately, your paper does not meet the required standard. Please review the feedback and consider resubmitting.
+
+    Scores saved to DB (one write per reviewer — 3 total writes):
+      Dr. Pillay : 2.0 / 10  <-- individual DB write
+      Prof. Singh : 2.0 / 10  <-- individual DB write
+      Prof. Makura : 2.0 / 10  <-- individual DB write
+
+    Self-call: calculateAverage()
+    Sequence: EvaluationManager --> EvaluationManager : calculateAverage()
+    Self-call: checkConsensus()
+    Sequence: EvaluationManager --> EvaluationManager : checkConsensus()
+    Self-call: applyRules()
+    Sequence: EvaluationManager --> EvaluationManager : applyRules()
+    (BASELINE: decision logic buried inside EvaluationManager)
+
+  [STEP 6] Notification sent by EvaluationManager directly
+           (BASELINE: EvaluationManager calls NotificationService)
+           Sequence: EvaluationManager --> NotificationService : notifyRejected()
+                     NotificationService --> Researcher : sendNotification()
+
+  [DECISION] Avg: 2,00 | Consensus Agreed: true -> REJECTED
+    Outcome     : REJECTED
+    Paper       : Flat Earth Survey
+    Researcher  : A004
+    Message     : Unfortunately, your paper does not meet the required standard. Please review the feedback and consider resubmitting.
+
+  ════════════════════════════════════════════
+  SCENARIO RESULT
+  ════════════════════════════════════════════
+  Final status   : REJECTED
+  Method calls   : 8  (tracked in SubmissionController)
+  ════════════════════════════════════════════
+
+  BENCHMARK — 1000 iterations (for Task 6 
+  +----------------------------------------------+
+  |  BENCHMARK RESULTS                           |
+  +----------------------------------------------+
+  |  Iterations       : 1000                    |
+  |  Total time       : 96                   ms |
+  |  Avg time per run : 0,096                  ms |
+  |  Avg method calls : 8,0                     |
+  +----------------------------------------------+
+
+BUILD SUCCESSFUL (total time: 0 seconds)

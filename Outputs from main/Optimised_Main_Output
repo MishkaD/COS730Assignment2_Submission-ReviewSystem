@@ -1,0 +1,377 @@
+run:
+
+  ╔════════════════════════════════════════════════════════════╗
+  ║  SUBMISSION AND REVIEW SYSTEM  ║
+  ║  OPTIMISED IMPLEMENTATION — Task 5                  ║
+  ╚════════════════════════════════════════════════════════════╝
+
+  Key optimisations visible in the output:
+    - DecisionTable replaces Validator (Step 2)
+    - assignBestReviewers() — one call, no controller loop (Step 4)
+    - saveScores(batch) — one DB write, not N writes (Step 5)
+    - EvaluationManager returns outcome, SC notifies (Step 6)
+
+╔══════════════════════════════════════════════════════════╗
+║  SCENARIO 1 : Strong Paper — reviewers agree
+╚══════════════════════════════════════════════════════════╝
+  Expected: ACCEPTED (avg >= 7.0, consensus <= 2.0)
+
+  Paper  : Deep Learning in NLP
+  Author : A003
+  Format : PDF
+  ............................................................
+
+  [STEP 1] Researcher submits paper via the UI
+           Sequence: Researcher --> UI --> SubmissionController : submit(data)
+
+  [STEP 2] SubmissionController calls DecisionTable to validate format
+           Sequence: SubmissionController --> DecisionTable : isFormatValid(data)
+           (No separate Validator class — DecisionTable owns this rule)
+
+    DecisionTable returned: valid  [format = PDF]
+
+  [STEP 3] Saving submission to database
+           Sequence: SubmissionController --> Database : saveSubmission(data)
+           Confirmation: SAVED_OK_SUB001
+
+  [STEP 4] Assigning reviewers
+           Sequence: SC --> ReviewerManager : assignBestReviewers(data)
+           (Fetch + eligibility check + assignment all done inside ReviewerManager)
+           (Controller no longer runs an assignment loop — that is now encapsulated)
+
+  [ReviewerManager] assignBestReviewers(data) called
+    Sequence: SubmissionController --> ReviewerManager : assignBestReviewers(data)
+
+    Fetching reviewer list from database...
+    Sequence: ReviewerManager --> Database : fetchReviewers()
+    Database --> ReviewerManager : reviewerList (5 reviewers)
+
+    [Internal eligibility check & assignment — single pass]
+    DecisionTable checks each reviewer against Table 2 rules:
+    (Baseline ran two separate loops here — this is one loop)
+
+    Dr. Pillay [Artificial Intelligence]
+      -> ELIGIBLE   -- assigned (workload now 1)
+    Prof. Singh [Software Engineering]
+      -> ELIGIBLE   -- assigned (workload now 1)
+    Dr. Marshall [Data Science]
+      -> EXCLUDED   -- workload 5 >= limit of 4
+    Prof. Makura [Systems Design]
+      -> ELIGIBLE   -- assigned (workload now 1)
+
+    3 reviewer(s) assigned.
+    ReviewerManager --> SubmissionController : success
+
+  [STEP 5] Starting evaluation
+           Sequence: SC --> EvaluationManager : evaluate(submission)
+           (EvaluationManager will return an outcome string — not call NS directly)
+
+  [EvaluationManager] evaluate(submission) called
+    Sequence: SubmissionController --> EvaluationManager : evaluate(submission)
+
+    LOOP [each reviewer submits score]:
+    Sequence: loop [each reviewer] --> Reviewer : submitScore(score)
+    NOTE: scores are COLLECTED here, NOT saved one by one (N+1 fix)
+
+    Dr. Pillay submits score: 8.0 / 10
+    Prof. Singh submits score: 7.5 / 10
+    Prof. Makura submits score: 8.5 / 10
+
+    Batch update — solves N+1 problem:
+    Sequence: EvaluationManager --> Database : saveScores(batch)
+    Saving all 3 scores in ONE database call
+    (Baseline made 3 separate calls — now just 1)
+
+    Average score : 8,00 / 10
+    Std deviation : 0,41  (threshold: 2.0)
+    Reviewers agreed: YES
+
+    Business rules centralised in DecisionTable:
+    Sequence: EvaluationManager --> DecisionTable : determineOutcome(avg, consensus)
+    THRESHOLDS (all defined in DecisionTable — one source of truth):
+      Accept threshold : avg >= 7.0
+      Reject threshold : avg <  4.0
+      Consensus margin : std dev <= 2.0
+
+    avg 8,00 >= 7.0  AND  reviewers agreed  -->  ACCEPTED
+
+    DecisionTable --> EvaluationManager : outcome = ACCEPTED
+
+    EvaluationManager --> SubmissionController : outcome
+    (NotificationService is NOT called here — that is the controller's job)
+
+  [STEP 6] Decoupled notification — SubmissionController sends outcome
+           Sequence: SC --> NotificationService : sendOutcome(outcome, data)
+           (EvaluationManager has no knowledge of NotificationService)
+
+    +----------------------------------------------------------+
+    |  NOTIFICATION TO RESEARCHER                              |
+    Outcome     : ACCEPTED
+    Paper       : Deep Learning in NLP
+    Researcher  : A003
+    Message     : Congratulations! Your paper has been accepted for publication.
+    +----------------------------------------------------------+
+
+           NotificationService --> Researcher : sendNotification()  [delivered]
+
+
+  ════════════════════════════════════════════
+  SCENARIO RESULT
+  ════════════════════════════════════════════
+  Final status   : ACCEPTED
+  Method calls   : 6  (tracked in SubmissionController)
+  ════════════════════════════════════════════
+
+╔══════════════════════════════════════════════════════════╗
+║  SCENARIO 2 : Invalid format (TXT)
+╚══════════════════════════════════════════════════════════╝
+  Expected: Error — process stops at DecisionTable (no Validator class)
+
+  Paper  : Quantum Physics
+  Author : A002
+  Format : TXT
+  ............................................................
+
+  [STEP 1] Researcher submits paper via the UI
+           Sequence: Researcher --> UI --> SubmissionController : submit(data)
+
+  [STEP 2] SubmissionController calls DecisionTable to validate format
+           Sequence: SubmissionController --> DecisionTable : isFormatValid(data)
+           (No separate Validator class — DecisionTable owns this rule)
+
+    [ALT: INVALID FORMAT]
+    +----------------------------------------------------------+
+    | Format 'TXT' is NOT accepted.                          |
+    | DecisionTable returned: invalid                          |
+    | Sequence: SC --> UI : return error                       |
+    | Process stops here.                                      |
+    +----------------------------------------------------------+
+
+  ════════════════════════════════════════════
+  SCENARIO RESULT
+  ════════════════════════════════════════════
+  Final status   : PENDING
+  Method calls   : 3  (tracked in SubmissionController)
+  ════════════════════════════════════════════
+
+╔══════════════════════════════════════════════════════════╗
+║  SCENARIO 3 : Conflict of Interest — Mixed Scores
+╚══════════════════════════════════════════════════════════╝
+  Expected: REVISION (avg 6.33, between 4.0 and 7.0)
+
+  Paper  : Blockchain Healthcare
+  Author : A001
+  Format : DOCX
+  ............................................................
+
+  [STEP 1] Researcher submits paper via the UI
+           Sequence: Researcher --> UI --> SubmissionController : submit(data)
+
+  [STEP 2] SubmissionController calls DecisionTable to validate format
+           Sequence: SubmissionController --> DecisionTable : isFormatValid(data)
+           (No separate Validator class — DecisionTable owns this rule)
+
+    DecisionTable returned: valid  [format = DOCX]
+
+  [STEP 3] Saving submission to database
+           Sequence: SubmissionController --> Database : saveSubmission(data)
+           Confirmation: SAVED_OK_SUB003
+
+  [STEP 4] Assigning reviewers
+           Sequence: SC --> ReviewerManager : assignBestReviewers(data)
+           (Fetch + eligibility check + assignment all done inside ReviewerManager)
+           (Controller no longer runs an assignment loop — that is now encapsulated)
+
+  [ReviewerManager] assignBestReviewers(data) called
+    Sequence: SubmissionController --> ReviewerManager : assignBestReviewers(data)
+
+    Fetching reviewer list from database...
+    Sequence: ReviewerManager --> Database : fetchReviewers()
+    Database --> ReviewerManager : reviewerList (5 reviewers)
+
+    [Internal eligibility check & assignment — single pass]
+    DecisionTable checks each reviewer against Table 2 rules:
+    (Baseline ran two separate loops here — this is one loop)
+
+    Dr. Pillay [Artificial Intelligence]
+      -> EXCLUDED   -- conflict of interest with author A001
+    Prof. Singh [Software Engineering]
+      -> ELIGIBLE   -- assigned (workload now 1)
+    Dr. Marshall [Data Science]
+      -> EXCLUDED   -- workload 5 >= limit of 4
+    Prof. Makura [Systems Design]
+      -> ELIGIBLE   -- assigned (workload now 1)
+    Dr. Bosman [Artificial Intelligence]
+      -> ELIGIBLE   -- assigned (workload now 1)
+
+    3 reviewer(s) assigned.
+    ReviewerManager --> SubmissionController : success
+
+  [STEP 5] Starting evaluation
+           Sequence: SC --> EvaluationManager : evaluate(submission)
+           (EvaluationManager will return an outcome string — not call NS directly)
+
+  [EvaluationManager] evaluate(submission) called
+    Sequence: SubmissionController --> EvaluationManager : evaluate(submission)
+
+    LOOP [each reviewer submits score]:
+    Sequence: loop [each reviewer] --> Reviewer : submitScore(score)
+    NOTE: scores are COLLECTED here, NOT saved one by one (N+1 fix)
+
+    Prof. Singh submits score: 7.5 / 10
+    Prof. Makura submits score: 8.5 / 10
+    Dr. Bosman submits score: 3.0 / 10
+
+    Batch update — solves N+1 problem:
+    Sequence: EvaluationManager --> Database : saveScores(batch)
+    Saving all 3 scores in ONE database call
+    (Baseline made 3 separate calls — now just 1)
+
+    Average score : 6,33 / 10
+    Std deviation : 2,39  (threshold: 2.0)
+    Reviewers agreed: NO
+
+    Business rules centralised in DecisionTable:
+    Sequence: EvaluationManager --> DecisionTable : determineOutcome(avg, consensus)
+    THRESHOLDS (all defined in DecisionTable — one source of truth):
+      Accept threshold : avg >= 7.0
+      Reject threshold : avg <  4.0
+      Consensus margin : std dev <= 2.0
+
+    avg 6,33 between 4.0 and 7.0  -->  REVISION
+
+    DecisionTable --> EvaluationManager : outcome = REVISION
+
+    EvaluationManager --> SubmissionController : outcome
+    (NotificationService is NOT called here — that is the controller's job)
+
+  [STEP 6] Decoupled notification — SubmissionController sends outcome
+           Sequence: SC --> NotificationService : sendOutcome(outcome, data)
+           (EvaluationManager has no knowledge of NotificationService)
+
+    +----------------------------------------------------------+
+    |  NOTIFICATION TO RESEARCHER                              |
+    Outcome     : REVISION REQUIRED
+    Paper       : Blockchain Healthcare
+    Researcher  : A001
+    Message     : Your paper shows promise but requires revisions before it can be accepted. Please address reviewer feedback and resubmit.
+    +----------------------------------------------------------+
+
+           NotificationService --> Researcher : sendNotification()  [delivered]
+
+
+  ════════════════════════════════════════════
+  SCENARIO RESULT
+  ════════════════════════════════════════════
+  Final status   : REVISION
+  Method calls   : 6  (tracked in SubmissionController)
+  ════════════════════════════════════════════
+
+╔══════════════════════════════════════════════════════════╗
+║  SCENARIO 4 : Weak Paper — Low scores
+╚══════════════════════════════════════════════════════════╝
+  Expected: REJECTED (avg < 4.0)
+
+  Paper  : Flat Earth Survey
+  Author : A004
+  Format : PDF
+  NOTE   : Reviewer scores overridden to 2.0, 3.0, 1.5 (avg=2.17)
+  ............................................................
+
+  [STEP 1] Researcher submits paper via the UI
+           Sequence: Researcher --> UI --> SubmissionController : submit(data)
+
+  [STEP 2] SubmissionController calls DecisionTable to validate format
+           Sequence: SubmissionController --> DecisionTable : isFormatValid(data)
+           (No separate Validator class — DecisionTable owns this rule)
+
+    DecisionTable returned: valid  [format = PDF]
+
+  [STEP 3] Saving submission to database
+           Sequence: SubmissionController --> Database : saveSubmission(data)
+           Confirmation: SAVED_OK_SUB004
+
+  [STEP 4] Assigning reviewers
+           Sequence: SC --> ReviewerManager : assignBestReviewers(data)
+           (Fetch + eligibility check + assignment all done inside ReviewerManager)
+           (Controller no longer runs an assignment loop — that is now encapsulated)
+
+  [ReviewerManager] assignBestReviewers(data) called
+    Sequence: SubmissionController --> ReviewerManager : assignBestReviewers(data)
+
+    Fetching reviewer list from database...
+    Sequence: ReviewerManager --> Database : fetchReviewers()
+    Database --> ReviewerManager : reviewerList (5 reviewers)
+
+    [Internal eligibility check & assignment — single pass]
+    DecisionTable checks each reviewer against Table 2 rules:
+    (Baseline ran two separate loops here — this is one loop)
+
+    Dr. Pillay [Artificial Intelligence]
+      -> ELIGIBLE   -- assigned (workload now 1)
+    Prof. Singh [Software Engineering]
+      -> ELIGIBLE   -- assigned (workload now 1)
+    Dr. Marshall [Data Science]
+      -> EXCLUDED   -- workload 5 >= limit of 4
+    Prof. Makura [Systems Design]
+      -> ELIGIBLE   -- assigned (workload now 1)
+
+    3 reviewer(s) assigned.
+    ReviewerManager --> SubmissionController : success
+
+  [STEP 5] Starting evaluation
+           Sequence: SC --> EvaluationManager : evaluate(submission)
+           (EvaluationManager will return an outcome string — not call NS directly)
+
+  [EvaluationManager] evaluate(submission) — low score scenario
+
+  LOOP [each reviewer submits score]:
+  (Scores collected first — not saved individually)
+
+  Dr. Pillay submits score: 2.0 / 10
+  Prof. Singh submits score: 3.0 / 10
+  Prof. Makura submits score: 1.5 / 10
+
+  Batch update: saveScores(batch) — 1 database call
+  Average score : 2,17 / 10
+  Sending to DecisionTable: determineOutcome(2,17, true)
+  avg 2,17 < 4,0  -->  REJECTED
+
+  DecisionTable --> EvaluationManager : outcome = REJECTED
+  EvaluationManager --> SubmissionController : outcome
+
+  [STEP 6] Decoupled notification — SubmissionController sends outcome
+           Sequence: SC --> NotificationService : sendOutcome(outcome, data)
+           (EvaluationManager has no knowledge of NotificationService)
+
+    +----------------------------------------------------------+
+    |  NOTIFICATION TO RESEARCHER                              |
+    Outcome     : REJECTED
+    Paper       : Flat Earth Survey
+    Researcher  : A004
+    Message     : Unfortunately, your paper did not meet the required standard. Please review feedback and consider resubmitting.
+    +----------------------------------------------------------+
+
+           NotificationService --> Researcher : sendNotification()  [delivered]
+
+
+  ════════════════════════════════════════════
+  SCENARIO RESULT
+  ════════════════════════════════════════════
+  Final status   : REJECTED
+  Method calls   : 6  (tracked in SubmissionController)
+  ════════════════════════════════════════════
+
+  BENCHMARK — 1000 iterations (Task 6)
+  +----------------------------------------------+
+  |  BENCHMARK RESULTS                           |
+  +----------------------------------------------+
+  |  Iterations       : 1000                    |
+  |  Total time       : 191                  ms |
+  |  Avg time per run : 0,191                  ms |
+  |  Avg method calls : 6,0                     |
+  +----------------------------------------------+
+
+BUILD SUCCESSFUL (total time: 0 seconds)
+
+
