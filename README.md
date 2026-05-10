@@ -1,27 +1,34 @@
-COS 730 — Assignment 2
-Student Name: Mishka Dukhanti
-Student Number: u22617541
+# Intelligent Submission and Review System
 
-Overview
-+--------------------------------------------------+
-This repository contains the source code for the empirical evaluation of an Intelligent Submission and Review System Assignment.
-Key Objectives:
-•	Implement a system based on a provided sequence diagram. 
-•	Analyse design inefficiencies, including high coupling, redundant interactions, and God Class behaviour. 
-•	Refactor the system using a Decision Engine and encapsulated logic. 
-•	Empirically compare both systems using interaction counts and execution time metrics. 
-+--------------------------------------------------+
+**COS 730 — Assignment 2**
+- **Student Name:** Mishka Dukhanti
+- **Student Number:** u22617541
 
-Repository Structure
+---
+
+## Overview
+This repository contains the source code for the empirical evaluation of an Intelligent Submission and Review System in the assignment.
+
+### Key Objectives:
+- Implement a system based on a provided baseline sequence diagram.
+- Analyse design inefficiencies, including high coupling and God Class behaviour.
+- Refactor the system using a Decision Engine and encapsulated logic.
+- Empirically compare both systems using interaction counts.
+
+---
+
+## Repository Structure
 The project is organized into the following directories:
-•	/SubmissionSystem_BaselineV2: The original implementation. It follows the baseline sequence diagram exactly.
-•	/SubmissionSystem_OptimisedV2: The refactored implementation. It utilizes a DecisionTable for centralized rules, batch database writes, and decoupled notification logic. 
-•	/Outputs from main: Contains the console logs for each scenario to verify results in my reports. 
-+---------------------------------------------------+
-How to Run ?
-1.	Clone the Repository:
-    git clone https://github.com/[Your-Username]/COS730Assignment2_Submission-ReviewSystem.git
-2.	Open in IDE: Open the project in NetBeans.
-3.	Run Baseline: Execute Main.java in submissionsystem_baselinev2 project in src folder to see results.
-4.	Run Optimised: Execute Main.java in submissionsystem_optimisedv2 project in src folder to see results.
 
+- **/SubmissionSystem_BaselineV2**: The original implementation with a God-object controller and N+1 database interactions.
+- **/SubmissionSystem_OptimisedV2**: The refactored implementation utilizing a DecisionTable and batch database writes.
+- **/Outputs from main**: Contains console logs for each scenario to verify  results.
+
+---
+
+## How to Run
+1. **Clone the Repository:**
+   `git clone https://github.com/MishkaD/COS730Assignment2_Submission-ReviewSystem.git`
+2. **Open in IDE:** Open the project in NetBeans.
+3. **Run Baseline:** Execute `Main.java` in the `submissionsystem_baselinev2` project.
+4. **Run Optimised:** Execute `Main.java` in the `submissionsystem_optimisedv2` project.
