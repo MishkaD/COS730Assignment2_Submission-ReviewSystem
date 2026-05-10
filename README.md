@@ -3,7 +3,7 @@ Student Name: Mishka Dukhanti
 Student Number: u22617541
 
 Overview
-+---------------------------------------------------+
++--------------------------------------------------+
 This repository contains the source code for the empirical evaluation of an Intelligent Submission and Review System Assignment.
 Key Objectives:
 •	Implement a system based on a provided sequence diagram. 
