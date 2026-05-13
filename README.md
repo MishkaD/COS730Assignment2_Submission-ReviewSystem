@@ -30,5 +30,5 @@ The project is organized into the following directories:
 1. **Clone the Repository:**
    `git clone https://github.com/MishkaD/COS730Assignment2_Submission-ReviewSystem.git`
 2. **Open in IDE:** Open the project in NetBeans.
-3. **Run Baseline:** Execute `Main.java` in the `submissionsystem_baselinev2` project.
-4. **Run Optimised:** Execute `Main.java` in the `submissionsystem_optimisedv2` project.
+3. **Run Baseline:** Execute `Main.java` in the `submissionsystem_baselinev2`in src folder project.
+4. **Run Optimised:** Execute `Main.java` in the `submissionsystem_optimisedv2`in src folder project.
